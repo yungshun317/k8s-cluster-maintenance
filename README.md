@@ -1,7 +1,11 @@
 # Cluster maintenance
 * Understand Kubernetes cluster upgrade process.
+* Facilitate operating system upgrades.
+* Implement backup and restore methodologies.
 
 ## Upgrade kubeadm cluster
+According to my experience, we had better automate the upgrade procedure with Ansible.
+
 ### Determine which version to upgrade to
 $ sudo apt-get update
 $ sudo apt-cache policy kubeadm
@@ -19,7 +23,7 @@ kubeadm:
         500 https://apt.kubernetes.io kubernetes-xenial/main amd64 Packages
         100 /var/lib/dpkg/status
 
-## Upgrade the control plane node
+### Upgrade the control plane node
 $ sudo apt-mark unhold kubeadm && sudo apt-get update && sudo apt-get install -y kubeadm=1.13.3-00 && sudo apt-mark hold kubeadm
 
 $ kubeadm version
@@ -223,4 +227,88 @@ k8s-master     Ready    master   2d    v1.13.3
 k8s-worker-1   Ready    <none>   2d    v1.13.3
 k8s-worker-2   Ready    <none>   2d    v1.13.3
 
+### Recover from a failure state
+If kubeadm upgrade fails and does not roll back, you can run kubeadm upgrade again. This command is idempotent and eventually makes sure that the actual state is the desired state you declare.
 
+## Backup Kubernetes
+There are essentially 2 reasons for backing up:
+1. To be able to restore a failed master node.
+2. To be able to restore applications (with data).
+
+Because workers should be interchangeable in Kubernetes, it should not matter what node a Pod is running on. We won't mention backing up worker nodes. 
+
+### Backup a single master
+1. Backup certificates:
+
+$ sudo cp -r /etc/kubernetes/pki backup/ 
+
+2. Make etcd snapshot:
+
+$ sudo docker run --rm -v $(pwd)/backup:/backup
+    --network host
+    -v /etc/kubernetes/pki/etcd:/etc/kubernetes/pki/etcd
+    --env ETCDCTL_API=3
+    k8s.gcr.io/etcd-amd64:3.2.18
+    etcdctl --endpoints=https://127.0.0.1:2379
+    --cacert=/etc/kubernetes/pki/etcd/ca.crt
+    --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt
+    --key=/etc/kubernetes/pki/etcd/healthcheck-client.key
+    snapshot save /backup/etcd-snapshot-latest.db
+Unable to find image 'k8s.gcr.io/etcd-amd64:3.2.18' locally
+3.2.18: Pulling from etcd-amd64
+f70adabe43c0: Pull complete 
+7c7edbd93e22: Pull complete 
+e0de1b76f800: Pull complete 
+Digest: sha256:b960569ade5f37205a033dcdc3191fe99dc95b15c6795a6282859070ec2c6124
+Status: Downloaded newer image for k8s.gcr.io/etcd-amd64:3.2.18
+Snapshot saved at /backup/etcd-snapshot-latest.db
+
+This command needs a bit more explaining. First of all, the idea is to create a snapshot of the etcd database. This is done by communicating with the running etcd instance in Kubernetes and asking it to create a snapshot. The reason for the very long command is basically to avoid messing with etcd running in Kubernetes as much as possible. We are launching a separate container using the same docker image that kubeadm used for setting up the cluster (k8s.gcr.io/etcd-amd64:3.2.18). But in order to communicate with the etcd pod in Kubernetes, we need to:
+* Use the host network in order to access 127.0.0.1:2379, where etcd is exposed (--network host)
+* Mount the backup folder where we want to save the snapshot (-v $(pwd)/backup:/backup)
+* Mount the folder containing the certificates needed to access etcd (-v /etc/kubernetes/pki/etcd:/etc/kubernetes/pki/etcd)
+* Specify the correct etcd API version as environment variable (--env ETCDCTL_API=3)
+* The actual command for creating a snapshot (etcdctl snapshot save /backup/etcd-snapshot-latest.db)
+* Some flags for the etcdctl command
+  * Specify where to connect to (--endpoints=https://127.0.0.1:2379)
+  * Specify certificates to use (--cacert=..., --cert=..., --key=...)
+
+So we start a docker container with the etcdctl tool installed. We tell it to create a snapshot of the etcd instance running in the Kubernetes cluster and store it in a backup folder that we mount from the host.
+
+3. (Optional) Backup kubeadm-config.yaml:
+$ sudo cp /etc/kubeadm/kubeadm-config.yaml backup/
+
+### Restore a single master
+This is pretty much a reversal of the previous steps. Certificates and kubeadm configuration file are restored from the backup location simply by copying files and folders back to where they were. For etcd we restore the snapshot and then move the data to /var/lib/etcd, since that is where kubeadm will tell etcd to store its data.
+
+1. Restore certificates:
+
+$ sudo cp -r backup/pki /etc/kubernetes/
+
+2. Restore etcd backup:
+
+$ sudo mkdir -p /var/lib/etcd
+$ sudo docker run --rm
+    -v $(pwd)/backup:/backup
+    -v /var/lib/etcd:/var/lib/etcd
+    --env ETCDCTL_API=3
+    k8s.gcr.io/etcd-amd64:3.2.18
+    /bin/sh -c "etcdctl snapshot restore '/backup/etcd-snapshot-latest.db' ; mv /default.etcd/member/ /var/lib/etcd/"
+
+3. (Optional) Restore kubeadm-config.yaml:
+
+$ sudo mkdir /etc/kubeadm
+$ sudo cp backup/kubeadm-config.yaml /etc/kubeadm/
+
+4. Initialize the master with backup:
+
+$ sudo kubeadm init --ignore-preflight-errors=DirAvailable--var-lib-etcd
+    --config /etc/kubeadm/kubeadm-config.yaml
+
+Note that we have to add an extra flag to the kubeadm init command (--ignore-preflight-errors=DirAvailable--var-lib-etcd) to acknowledge that we want to use the pre-existing data. And usage of a configuration file (--config) is experimental.
+
+### Automate etcd backups
+It's good to use Kubernetes CronJob to keep track of the backup jobs inside Kubernetes just like monitoring your workloads.
+
+### Application data and resources
+If your workload is completely stateless, you just have to store your .yml manifests somewhere safe and kubectl apply them whereever you want. Otherwise, you have to investigate how to make database snapshots. Databases all have their own backup and restore procedures. 
