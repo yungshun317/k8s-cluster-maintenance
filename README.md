@@ -134,3 +134,66 @@ $ sudo apt-mark unhold kubelet && sudo apt-get update && sudo apt-get install -y
 
 ### Upgrade kubectl on all nodes
 $ sudo apt-mark unhold kubectl && sudo apt-get update && sudo apt-get install -y kubectl=1.13.3-00 && sudo apt-mark hold kubectl 
+
+### Drain control plane and worker nodes
+$ kubectl get no
+NAME           STATUS   ROLES    AGE   VERSION
+k8s-master     Ready    master   2d    v1.13.3
+k8s-worker-1   Ready    <none>   2d    v1.13.0
+k8s-worker-2   Ready    <none>   2d    v1.13.0
+
+$ kubectl drain k8s-worker-1
+node/k8s-worker-1 cordoned
+error: unable to drain node "k8s-worker-1", aborting command...
+
+There are pending nodes to be drained:
+ k8s-worker-1
+error: DaemonSet-managed pods (use --ignore-daemonsets to ignore): kube-flannel-ds-amd64-hhbx5, kube-proxy-zbt2p
+
+$ kubectl drain k8s-worker-1 --ignore-daemonsets
+node/k8s-worker-1 already cordoned
+WARNING: Ignoring DaemonSet-managed pods: kube-flannel-ds-amd64-hhbx5, kube-proxy-zbt2p
+pod/coredns-86c58d9df4-fkhz5 evicted
+pod/coredns-86c58d9df4-952x2 evicted
+pod/nginx-deployment-779fcd779f-j97dd evicted
+pod/nginx-deployment-779fcd779f-cvqhg evicted
+pod/kube-state-metrics-5dc69d8d89-9dslz evicted
+node/k8s-worker-1 evicted
+
+$ kubectl drain k8s-worker-2 --ignore-daemonsets
+node/k8s-worker-2 cordoned
+error: unable to drain node "k8s-worker-2", aborting command...
+
+There are pending nodes to be drained:
+ k8s-worker-2
+error: pods with local storage (use --delete-local-data to override): metrics-server-76db6db868-qbczr; pods not managed by ReplicationController, ReplicaSet, Job, DaemonSet or StatefulSet (use --force to override): no-annotation
+
+$ kubectl drain k8s-worker-2 --ignore-daemonsets --delete-local-data --force
+node/k8s-worker-2 already cordoned
+WARNING: Ignoring DaemonSet-managed pods: kube-flannel-ds-amd64-jvwmk, kube-proxy-5dfm9; Deleting pods with local storage: metrics-server-76db6db868-qbczr; Deleting pods not managed by ReplicationController, ReplicaSet, Job, DaemonSet or StatefulSet: no-annotation
+pod/nginx-deployment-779fcd779f-9ddhw evicted
+pod/nginx-deployment-779fcd779f-vr6hp evicted
+pod/coredns-86c58d9df4-pg9qc evicted
+pod/kube-state-metrics-5dc69d8d89-94qc6 evicted
+pod/no-annotation evicted
+pod/nginx-deployment-779fcd779f-c8mpj evicted
+pod/nginx-deployment-779fcd779f-sbkbj evicted
+pod/metrics-server-76db6db868-qbczr evicted
+pod/nginx-deployment-779fcd779f-p525f evicted
+node/k8s-worker-2 evicted
+
+$ kubectl drain k8s-master --ignore-daemonsets
+node/k8s-master cordoned
+WARNING: Ignoring DaemonSet-managed pods: kube-flannel-ds-amd64-hrncf, kube-proxy-hlmcn
+pod/coredns-86c58d9df4-wtwft evicted
+pod/coredns-86c58d9df4-jv4p7 evicted
+node/k8s-master evicted
+
+### Upgrade the kubelet config on worker nodes
+$ sudo kubeadm upgrade node config --kubelet-version v1.13.3
+[kubelet] Downloading configuration for the kubelet from the "kubelet-config-1.13" ConfigMap in the kube-system namespace
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[upgrade] The configuration for this node was successfully updated!
+[upgrade] Now you should go ahead and upgrade the kubelet package using your package manager.
+
+### Upgrade 
