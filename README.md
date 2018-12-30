@@ -196,4 +196,31 @@ $ sudo kubeadm upgrade node config --kubelet-version v1.13.3
 [upgrade] The configuration for this node was successfully updated!
 [upgrade] Now you should go ahead and upgrade the kubelet package using your package manager.
 
-### Upgrade 
+### Upgrade kubeadm and kubelet on worker nodes
+$ sudo apt-mark unhold kubeadm kubelet && sudo apt-get update && sudo apt-get install -y kubelet=1.13.3-00 kubeadm=1.13.3-00 && sudo apt-mark hold kubeadm kubelet
+
+### Restart the kubelet for all nodes
+$ sudo systemctl restart kubelet
+$ sudo systemctl status kubelet
+
+$ kubectl uncordon k8s-master
+node/k8s-master uncordoned
+
+$ kubectl get nodes
+NAME           STATUS                     ROLES    AGE   VERSION
+k8s-master     Ready                      master   2d    v1.13.3
+k8s-worker-1   Ready,SchedulingDisabled   <none>   2d    v1.13.3
+k8s-worker-2   Ready,SchedulingDisabled   <none>   2d    v1.13.3
+
+$ kubectl uncordon k8s-worker-1
+node/k8s-worker-1 uncordoned
+$ kubectl uncordon k8s-worker-2
+node/k8s-worker-2 uncordoned
+
+$ kubectl get nodes
+NAME           STATUS   ROLES    AGE   VERSION
+k8s-master     Ready    master   2d    v1.13.3
+k8s-worker-1   Ready    <none>   2d    v1.13.3
+k8s-worker-2   Ready    <none>   2d    v1.13.3
+
+
